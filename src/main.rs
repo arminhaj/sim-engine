@@ -1,105 +1,57 @@
-use log::{debug, error, info, warn};
-use std::error::Error;
-use std::sync::{Arc, mpsc};
+pub mod app;
+pub mod draw;
 
-use winit::window::WindowId;
+use app::{App, UserEvent};
+
+use log::{debug, error, info, warn};
+use std::sync::Arc;
+use std::error::Error;
+
+use tokio::sync::oneshot;
+
 use winit::{
     application::ApplicationHandler,
-    event::{WindowEvent, Event},
-    event_loop::{ActiveEventLoop, EventLoop},
+    event::{Event, WindowEvent},
+    event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
     window::Window,
 };
 
-use wgpu::{
-    Instance,
-    Surface,
-    Adapter,
-};
-
-use winit::event_loop::{EventLoopBuilder, EventLoopProxy};
-
-fn main() -> Result<(), Box<dyn Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    // initialize logger
     env_logger::init();
 
+    // instantiate ApplicationHandler implementor
+    let (tx, rx) = oneshot::channel();
+    let mut app = App::new(tx);
+
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
-
-    let (tx, rx) = mpsc::channel();
-
-    let window = None;
-    let proxy = Some(event_loop.create_proxy());
-
-    let mut app = App {
-        window,
-        proxy,
-        tx,
-    };
+    let proxy = event_loop.create_proxy();
 
     debug!("Spawning worker thread");
     let handle = std::thread::spawn(move || {
         debug!("Emitting UserEvent");
 
-        // we cannot send a UserEvent until the main thread initializes the window
-        let proxy = rx.recv().unwrap();
+        // wait to receive the Window from App::resumed()
+        let window = rx.blocking_recv();
 
+        // now we can safely use the proxy.
         debug!("Obtained proxy {proxy:?}");
         let _ = proxy.send_event(UserEvent::WakeUp);
+
+        worker_main();
     });
 
-    debug!("Running ApplicationHandler");
+    // tell the event loop to start running our ApplicationHandler implementor
+    debug!("Running app");
     event_loop.run_app(&mut app)?;
-
-
-    let _ = handle.join();
 
     Ok(())
 }
 
-#[derive(Debug)]
-enum UserEvent {
-    WakeUp,
+/// Serve as an entry point for the worker thread
+fn worker_main() {
+    debug!("This is the worker thread's entry point to the program.");
+
+    
 }
-
-struct App {
-    window: Option<Arc<Window>>,
-    proxy: Option<EventLoopProxy<UserEvent>>,
-    tx: mpsc::Sender<EventLoopProxy<UserEvent>>
-}
-
-impl ApplicationHandler<UserEvent> for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_none() {
-            self.window = match event_loop.create_window(Window::default_attributes()) {
-                Ok(t) => Some(Arc::new(t)),
-                Err(e) => {
-                    error!("Error initializing window: {e}");
-                    None
-                }
-            };
-
-            self.tx.send(self.proxy.take().unwrap()).unwrap();
-        }
-    }
-
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        window_id: WindowId,
-        event: WindowEvent,
-    ) {
-        match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            _ => (),
-        }
-
-        // info!("{event_loop:?}");
-        // info!("{window_id:?}");
-        // info!("{event:?}");
-    }
-
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
-        info!("{event_loop:?}");
-        info!("{event:?}");
-    }
-
-}
-
