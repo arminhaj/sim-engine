@@ -22,7 +22,7 @@ async fn main() -> anyhow::Result<(), EventLoopError> {
     let proxy = event_loop.create_proxy();
 
     debug!("Spawning task");
-    tokio::spawn(async move {
+    tokio::task::spawn_blocking(|| async move {
         debug!("Emitting UserEvent");
 
         // wait to receive the Window from App::resumed()
